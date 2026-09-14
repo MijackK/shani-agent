@@ -63,6 +63,12 @@ pub struct StartBootstrapArgs {
     /// Skip installing Ollama and pulling the model (non-Ollama backends).
     #[serde(default)]
     pub skip_ollama: bool,
+    /// Create the bundled 'google-workspace' agent profile during install
+    /// (mirrors install.ps1's -GoogleWorkspaceProfile). Drives the optional
+    /// `google-workspace` stage; opt-in, so absent/false leaves it out of the
+    /// manifest entirely.
+    #[serde(default)]
+    pub google_workspace_profile: bool,
 }
 
 fn default_true() -> bool {
@@ -474,6 +480,7 @@ async fn run_bootstrap(
         ?pin,
         kind = ?kind,
         include_desktop = args.include_desktop,
+        google_workspace_profile = args.google_workspace_profile,
         "bootstrap starting"
     );
 
@@ -533,6 +540,17 @@ async fn run_bootstrap(
     manifest_args_full.extend(manifest_args.clone());
     if args.include_desktop {
         manifest_args_full.push("-IncludeDesktop".to_string());
+    }
+    // Gates the optional `google-workspace` stage into the manifest, exactly
+    // like -IncludeDesktop gates Stage-Desktop. Must be passed here too or the
+    // manifest comes back without the stage and the per-stage call below would
+    // be the only place it existed. Windows-only: install.sh has no equivalent
+    // stage and would reject the unknown flag.
+    #[cfg(target_os = "windows")]
+    {
+        if args.google_workspace_profile {
+            manifest_args_full.push("-GoogleWorkspaceProfile".to_string());
+        }
     }
 
     let mut manifest_cancel_rx = None;
@@ -650,6 +668,12 @@ async fn run_bootstrap(
         stage_args.extend(manifest_args.clone());
         if args.include_desktop {
             stage_args.push("-IncludeDesktop".to_string());
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if args.google_workspace_profile {
+                stage_args.push("-GoogleWorkspaceProfile".to_string());
+            }
         }
 
         // A Windows PowerShell host can occasionally terminate with raw status

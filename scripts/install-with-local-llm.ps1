@@ -27,6 +27,9 @@
 #
 #   # Install + configure + build the desktop app, but don't open it yet:
 #   .\install-with-local-llm.ps1 -IncludeDesktop
+#
+#   # Install + also create the bundled 'google-workspace' agent profile:
+#   .\install-with-local-llm.ps1 -GoogleWorkspaceProfile
 # ============================================================================
 
 [CmdletBinding()]
@@ -61,7 +64,12 @@ param(
     [switch]$IncludeDesktop = $true,
 
     # Launch the Hermes Desktop (Electron) app when done.
-    [switch]$OpenDesktop
+    [switch]$OpenDesktop,
+
+    # Create the bundled 'google-workspace' agent profile during install
+    # (forwards install.ps1's -GoogleWorkspaceProfile). Only applies when the
+    # stock installer actually runs; ignored with -SkipInstall.
+    [switch]$GoogleWorkspaceProfile
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,11 +102,16 @@ if (-not $SkipInstall) {
     # -IncludeDesktop: build apps/desktop into a launchable Hermes.exe now,
     # instead of deferring that build to the first `hermes desktop` launch.
     $desktopFlag = if ($IncludeDesktop -or $OpenDesktop) { @("-IncludeDesktop") } else { @() }
-    & $InstallScript -SkipSetup @desktopFlag @InstallArgs
+    $googleWorkspaceFlag = if ($GoogleWorkspaceProfile) { @("-GoogleWorkspaceProfile") } else { @() }
+    & $InstallScript -SkipSetup @desktopFlag @googleWorkspaceFlag @InstallArgs
     if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "install.ps1 exited with code $LASTEXITCODE" }
     Write-Ok "Shani Agent installed"
 } else {
     Write-Step "Skipping Hermes install (-SkipInstall)"
+    if ($GoogleWorkspaceProfile) {
+        Write-Warn2 "-GoogleWorkspaceProfile only applies when install.ps1 runs; ignored with -SkipInstall."
+        Write-Warn2 "Create it later with: hermes profile create google-workspace"
+    }
 }
 
 # ---------------------------------------------------------------------------

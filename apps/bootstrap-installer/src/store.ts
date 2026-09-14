@@ -305,31 +305,36 @@ export async function initialize(): Promise<void> {
 // Actions
 // ---------------------------------------------------------------------------
 
-export interface LocalLlmOptions {
+export interface InstallOptions {
   configureLocalLlm: boolean
   model: string
   baseUrl: string
   skipOllama: boolean
+  /// Create a dedicated 'google-workspace' agent profile during install
+  /// (Windows only; mirrors install.ps1's -GoogleWorkspaceProfile).
+  googleWorkspaceProfile: boolean
 }
 
-const DEFAULT_LOCAL_LLM: LocalLlmOptions = {
+const DEFAULT_INSTALL_OPTS: InstallOptions = {
   configureLocalLlm: false,
   model: 'llama3.2:3b',
   baseUrl: 'http://localhost:11434/v1',
-  skipOllama: false
+  skipOllama: false,
+  googleWorkspaceProfile: false
 }
 
 /// The last options the user submitted, so a Retry from the failure screen
 /// re-runs with the same choices instead of silently dropping them.
-let lastInstallOpts: LocalLlmOptions = DEFAULT_LOCAL_LLM
+let lastInstallOpts: InstallOptions = DEFAULT_INSTALL_OPTS
 
-export async function startInstall(opts?: { branch?: string } & Partial<LocalLlmOptions>): Promise<void> {
+export async function startInstall(opts?: { branch?: string } & Partial<InstallOptions>): Promise<void> {
   if (opts) {
     lastInstallOpts = {
       configureLocalLlm: opts.configureLocalLlm ?? lastInstallOpts.configureLocalLlm,
       model: opts.model ?? lastInstallOpts.model,
       baseUrl: opts.baseUrl ?? lastInstallOpts.baseUrl,
-      skipOllama: opts.skipOllama ?? lastInstallOpts.skipOllama
+      skipOllama: opts.skipOllama ?? lastInstallOpts.skipOllama,
+      googleWorkspaceProfile: opts.googleWorkspaceProfile ?? lastInstallOpts.googleWorkspaceProfile
     }
   }
 
@@ -354,7 +359,8 @@ export async function startInstall(opts?: { branch?: string } & Partial<LocalLlm
       configure_local_llm: lastInstallOpts.configureLocalLlm,
       model: lastInstallOpts.configureLocalLlm ? lastInstallOpts.model : null,
       base_url: lastInstallOpts.configureLocalLlm ? lastInstallOpts.baseUrl : null,
-      skip_ollama: lastInstallOpts.skipOllama
+      skip_ollama: lastInstallOpts.skipOllama,
+      google_workspace_profile: lastInstallOpts.googleWorkspaceProfile
     }
   })
 }

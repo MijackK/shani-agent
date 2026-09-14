@@ -72,7 +72,14 @@ param(
     #   * The canonical CLI one-liner (irm | iex) omits the flag too;
     #     terminal users don't need a desktop binary built for them, and
     #     `hermes desktop` already builds on demand.
-    [switch]$IncludeDesktop
+    [switch]$IncludeDesktop,
+
+    # --- Google Workspace agent profile (opt-in) ---
+    # When set, a post-install stage creates a dedicated 'google-workspace'
+    # agent profile whose SOUL.md is the bundled Google Workspace playbook
+    # (scripts/profile-templates/google-workspace/SOUL.md).  Idempotent: an
+    # existing profile is never clobbered, so user edits survive re-installs.
+    [switch]$GoogleWorkspaceProfile
 )
 
 $ErrorActionPreference = "Stop"
@@ -4523,6 +4530,57 @@ function Invoke-SetupWizard {
     Pop-Location
 }
 
+function New-GoogleWorkspaceProfile {
+    # Opt-in (-GoogleWorkspaceProfile): create a dedicated 'google-workspace'
+    # agent profile using the bundled Google Workspace skill, and seed its
+    # SOUL.md from scripts/profile-templates/google-workspace/SOUL.md.
+    #
+    # Idempotent: an existing profile is left untouched (so a re-install or
+    # update never clobbers the user's edits).  Uses the venv's hermes.exe so
+    # the bundled skill is seeded and the profile is registered exactly like
+    # `hermes profile create` from a terminal.
+    $profileName = "google-workspace"
+    $profileDir = Join-Path $HermesHome "profiles\$profileName"
+
+    if (Test-Path -LiteralPath $profileDir) {
+        Write-Info "Profile '$profileName' already exists -- leaving it unchanged"
+        return
+    }
+
+    $hermesExe = Join-Path $InstallDir "venv\Scripts\hermes.exe"
+    if (-not (Test-Path -LiteralPath $hermesExe)) {
+        $hermesCmd = Get-Command hermes -ErrorAction SilentlyContinue
+        if ($hermesCmd) { $hermesExe = $hermesCmd.Source }
+    }
+    if (-not $hermesExe -or -not (Test-Path -LiteralPath $hermesExe)) {
+        $script:_StageSkippedReason = "hermes executable not found; cannot create the '$profileName' profile"
+        return
+    }
+
+    # Pin HERMES_HOME for the child so the profile lands under the same home
+    # this install used, even in cross-process stage-driver mode (each stage is
+    # a fresh PowerShell that may not have inherited the env var).
+    $env:HERMES_HOME = $HermesHome
+
+    Write-Info "Creating '$profileName' agent profile..."
+    & $hermesExe profile create $profileName --no-alias `
+        --description "Google Workspace integration agent: Gmail, Calendar, Drive, Docs and Sheets with least-privilege scopes and read-first proofs."
+    if ($LASTEXITCODE -ne 0) {
+        throw "hermes profile create $profileName failed (exit $LASTEXITCODE)"
+    }
+
+    $templatePath = Join-Path $InstallDir "scripts\profile-templates\$profileName\SOUL.md"
+    if (-not (Test-Path -LiteralPath $templatePath)) {
+        throw "Profile SOUL template not found: $templatePath"
+    }
+    $soulPath = Join-Path $profileDir "SOUL.md"
+    # UTF-8 WITHOUT a BOM: the playbook contains a non-ASCII arrow, and a BOM
+    # would be injected into the identity text downstream.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($soulPath, (Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8), $utf8NoBom)
+    Write-Success "Created '$profileName' profile with its Google Workspace SOUL.md"
+}
+
 function Start-GatewayIfConfigured {
     $envPath = "$HermesHome\.env"
     if (-not (Test-Path $envPath)) { return }
@@ -4762,6 +4820,13 @@ $InstallStages += @(
     @{ Name = "configure";        Title = "Configuring API keys and models";      Category = "post-install"; NeedsUserInput = $true;  Worker = "Stage-Configure" }
     @{ Name = "gateway";          Title = "Starting messaging gateway";           Category = "post-install"; NeedsUserInput = $true;  Worker = "Stage-Gateway" }
 )
+if ($GoogleWorkspaceProfile) {
+    # Opt-in (Hermes-Setup.exe / install-with-local-llm.ps1).  Appended after
+    # the interactive stages so an interactive install can inherit the freshly
+    # configured model into the new profile.  Only present in the manifest when
+    # the caller passed -GoogleWorkspaceProfile.
+    $InstallStages += @{ Name = "google-workspace"; Title = "Creating Google Workspace agent profile"; Category = "post-install"; NeedsUserInput = $false; Worker = "Stage-GoogleWorkspace" }
+}
 
 # Stage workers -- thin wrappers that delegate to the existing Install-* /
 # Test-* / Invoke-* functions while preserving their error semantics.  Kept
@@ -4805,6 +4870,7 @@ function Stage-PlatformSdks     { Resolve-UvCmd; Install-PlatformSdks }
 function Stage-BootstrapMarker  { Write-BootstrapMarker }
 function Stage-Configure        { Invoke-SetupWizard }
 function Stage-Gateway          { Start-GatewayIfConfigured }
+function Stage-GoogleWorkspace  { New-GoogleWorkspaceProfile }
 
 function Get-InstallStage {
     param([string]$Name)

@@ -25,9 +25,10 @@ export default function Welcome() {
   const [model, setModel] = useState('llama3.2:3b')
   const [baseUrl, setBaseUrl] = useState('http://localhost:11434/v1')
   const [skipOllama, setSkipOllama] = useState(false)
+  const [googleWorkspaceProfile, setGoogleWorkspaceProfile] = useState(false)
 
   function handleInstall() {
-    void startInstall({ configureLocalLlm, model, baseUrl, skipOllama })
+    void startInstall({ configureLocalLlm, model, baseUrl, skipOllama, googleWorkspaceProfile })
   }
 
   return (
@@ -89,6 +90,16 @@ export default function Welcome() {
                 </label>
               </div>
             )}
+
+            <label className="flex cursor-pointer select-none items-center gap-2.5 text-sm text-muted-foreground">
+              <input
+                checked={googleWorkspaceProfile}
+                className="h-4 w-4 cursor-pointer"
+                onChange={(e) => setGoogleWorkspaceProfile(e.target.checked)}
+                type="checkbox"
+              />
+              <span>Create a Google Workspace agent profile</span>
+            </label>
           </div>
         )}
 
