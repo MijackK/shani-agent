@@ -16,6 +16,9 @@
 #   # Ollama, specific model:
 #   .\install-with-local-llm.ps1 -Model qwen2.5:14b
 #
+#   # Ollama, specific model + context window (default is 65536):
+#   .\install-with-local-llm.ps1 -Model qwen2.5:14b -ContextLength 131072
+#
 #   # LM Studio (server already running on :1234), no Ollama install:
 #   .\install-with-local-llm.ps1 -SkipOllama -BaseUrl http://localhost:1234/v1 -Model my-loaded-model
 #
@@ -36,6 +39,11 @@
 param(
     # Model id exactly as your backend serves it (Ollama tag, LM Studio id, ...).
     [string]$Model = "llama3.2:3b",
+
+    # Context window (tokens) to request from the local model. Ollama defaults to
+    # 4K regardless of the model's real capacity; this bakes the value into the
+    # model via a Modelfile and tells Hermes to match it.
+    [int]$ContextLength = 65536,
 
     # OpenAI-compatible base URL of the local server.
     [string]$BaseUrl = "http://localhost:11434/v1",
@@ -173,7 +181,25 @@ if (-not $SkipOllama) {
         Write-Step "Pulling model '$Model' (this can be large)"
         & ollama pull $Model
         if ($LASTEXITCODE -ne 0) { Write-Warn2 "ollama pull exited $LASTEXITCODE -- verify the tag with 'ollama search' / ollama.com" }
-        else { Write-Ok "Model '$Model' ready" }
+        else {
+            # Ollama serves a model at a 4K context window by default, no matter the
+            # model's real capacity. Bake $ContextLength tokens into a derived tag via a
+            # Modelfile so every client (not just Hermes) gets the larger window. The
+            # derived model reuses the pulled base layers, so this adds only a tiny
+            # parameter layer, not a second copy of the weights.
+            $ctxKb = [int][Math]::Round($ContextLength / 1024)
+            $ctxTag = "$Model-$ctxKb`k"
+            $modelfilePath = Join-Path $env:TEMP ("hermes-ollama-" + [Guid]::NewGuid().ToString("N") + ".Modelfile")
+            "FROM $Model`nPARAMETER num_ctx $ContextLength`n" | Out-File -LiteralPath $modelfilePath -Encoding ascii
+            & ollama create $ctxTag -f $modelfilePath
+            Remove-Item -LiteralPath $modelfilePath -Force -ErrorAction SilentlyContinue
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn2 "ollama create exited $LASTEXITCODE -- keeping '$Model' at its default context"
+            } else {
+                Write-Ok "Model '$ctxTag' ready ($ContextLength token context)"
+                $Model = $ctxTag
+            }
+        }
     }
 } else {
     Write-Step "Skipping Ollama install/pull (-SkipOllama)"
@@ -195,6 +221,10 @@ function Set-LocalModelConfig([string]$Profile) {
     & $hermes @prefix config set model.provider custom | Out-Null
     & $hermes @prefix config set model.base_url $BaseUrl | Out-Null
     & $hermes @prefix config set model.default $Model | Out-Null
+    & $hermes @prefix config set model.context_length $ContextLength | Out-Null
+    if (-not $SkipOllama) {
+        & $hermes @prefix config set model.ollama_num_ctx $ContextLength | Out-Null
+    }
     & $hermes @prefix config set agent.reasoning_effort none | Out-Null
     return $LASTEXITCODE
 }
@@ -226,6 +256,7 @@ Write-Ok "Done. Hermes is configured for a local LLM:"
 Write-Host "    provider : custom"
 Write-Host "    base_url : $BaseUrl"
 Write-Host "    model    : $Model"
+Write-Host "    context  : $ContextLength tokens"
 Write-Host "    thinking : off"
 if ($namedProfiles.Count) {
     Write-Host "    profiles : default + $($namedProfiles.Count) named profile(s)"
