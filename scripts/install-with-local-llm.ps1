@@ -184,12 +184,42 @@ if (-not $SkipOllama) {
 # ---------------------------------------------------------------------------
 # The model section is a dict: model.default (id), model.provider, model.base_url.
 # `custom` = OpenAI-compatible endpoint (Ollama / LM Studio / vLLM / llama.cpp).
+#
+# Profiles are independent islands: `hermes config set` writes ONLY the active
+# profile's config.yaml, and named profiles never inherit it. So we set the model
+# on the default profile AND on every existing named profile -- otherwise a
+# profile such as the 'google-workspace' one created during install (which runs
+# before this step) keeps the hosted default and silently ignores the endpoint.
+function Set-LocalModelConfig([string]$Profile) {
+    $prefix = if ($Profile) { @("-p", $Profile) } else { @() }
+    & $hermes @prefix config set model.provider custom | Out-Null
+    & $hermes @prefix config set model.base_url $BaseUrl | Out-Null
+    & $hermes @prefix config set model.default $Model | Out-Null
+    & $hermes @prefix config set agent.reasoning_effort none | Out-Null
+    return $LASTEXITCODE
+}
+
 Write-Step "Configuring Hermes to use the local model"
-& $hermes config set model.provider custom | Out-Null
-& $hermes config set model.base_url $BaseUrl | Out-Null
-& $hermes config set model.default $Model | Out-Null
-& $hermes config set agent.reasoning_effort none | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "hermes config set failed (exit $LASTEXITCODE)" }
+if ((Set-LocalModelConfig "") -ne 0) { throw "hermes config set failed (exit $LASTEXITCODE)" }
+
+# Named profiles live beside the default config.yaml under <home>\profiles\<name>.
+# Skip tombstoned entries (profiles\.deleted\<name>) so a removed profile is not
+# resurrected by a stray config write.
+$hermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { "$env:LOCALAPPDATA\hermes" }
+$profilesRoot = Join-Path $hermesHome "profiles"
+$deletedRoot = Join-Path $profilesRoot ".deleted"
+$namedProfiles = @()
+if (Test-Path -LiteralPath $profilesRoot) {
+    $namedProfiles = @(Get-ChildItem -LiteralPath $profilesRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^[a-z0-9][a-z0-9_-]{0,63}$' -and $_.Name -ne 'default' } |
+        Where-Object { -not (Test-Path -LiteralPath (Join-Path $deletedRoot $_.Name)) })
+}
+foreach ($profile in $namedProfiles) {
+    Write-Host "    applying to profile '$($profile.Name)'"
+    if ((Set-LocalModelConfig $profile.Name) -ne 0) {
+        Write-Warn2 "Could not configure profile '$($profile.Name)' (exit $LASTEXITCODE) -- set it manually with: hermes -p $($profile.Name) config set model.provider custom"
+    }
+}
 
 Write-Host ""
 Write-Ok "Done. Hermes is configured for a local LLM:"
@@ -197,6 +227,9 @@ Write-Host "    provider : custom"
 Write-Host "    base_url : $BaseUrl"
 Write-Host "    model    : $Model"
 Write-Host "    thinking : off"
+if ($namedProfiles.Count) {
+    Write-Host "    profiles : default + $($namedProfiles.Count) named profile(s)"
+}
 Write-Host ""
 
 # ---------------------------------------------------------------------------
